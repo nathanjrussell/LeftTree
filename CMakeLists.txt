@@ -9,24 +9,33 @@ project(LeftTree
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+include(FetchContent)
+
+FetchContent_Declare(
+  CPPTypeConcepts
+  GIT_REPOSITORY https://github.com/nathanjrussell/CPP-Type-Concepts.git
+  GIT_TAG v1.0.0
+)
+FetchContent_MakeAvailable(CPPTypeConcepts)
+
 option(LEFTTREE_BUILD_TESTS "Build LeftTree unit tests" ON)
 option(LEFTTREE_BUILD_EXAMPLES "Build LeftTree examples" ON)
 
-add_library(LeftTree)
+# Header-only template library
+add_library(LeftTree INTERFACE)
 add_library(LeftTree::LeftTree ALIAS LeftTree)
 
-target_sources(LeftTree
-  PRIVATE
-    src/LeftTree.cpp
-)
-
 target_include_directories(LeftTree
-  PUBLIC
+  INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-target_compile_features(LeftTree PUBLIC cxx_std_20)
+target_compile_features(LeftTree INTERFACE cxx_std_20)
+
+# Concepts are a public dependency for the optional serialization helper header.
+# This keeps includes working for downstream consumers.
+target_link_libraries(LeftTree INTERFACE CPPTypeConcepts::cpp_type_concepts)
 
 set_target_properties(LeftTree PROPERTIES
   VERSION ${PROJECT_VERSION}
