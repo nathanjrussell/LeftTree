@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(LeftTree
-  VERSION 0.1.0
+  VERSION 1.0.0
   DESCRIPTION "Binary Tree structure that grows toward the left and recursively returns upward"
   LANGUAGES CXX
 )
