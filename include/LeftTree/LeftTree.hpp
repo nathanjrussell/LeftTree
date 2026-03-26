@@ -96,6 +96,13 @@ public:
   /** Returns true if the tree is complete (no more insertion positions). */
   [[nodiscard]] bool complete() const noexcept { return current_ == nullptr; }
 
+  /** Returns the total number of created elements (nodes + leaves). */
+  [[nodiscard]] std::size_t elementCount() const noexcept {
+    // IDs are assigned starting at 0 and incremented for each created element.
+    // Therefore nextId_ equals the number of created elements.
+    return static_cast<std::size_t>(nextId_ < 0 ? 0 : nextId_);
+  }
+
   /** Create a Node at the current insertion position. */
   void createNode() { createNode(std::nullopt); }
   void createNode(NodeData data) { createNode(std::optional<NodeData>(std::move(data))); }
@@ -108,9 +115,13 @@ public:
    * Returns a non-owning pointer to the Node with the given ID.
    * If not found (or the ID belongs to a Leaf), returns nullptr.
    */
-  [[nodiscard]] const Node* getNode(Id id) const noexcept { return findNode_(root_.get(), id); }
+  [[nodiscard]] const Node* getNode(Id id) const noexcept {
+    const Element* e = getElementById_(id);
+    if (!e || e->isLeaf()) return nullptr;
+    return static_cast<const Node*>(e);
+  }
   [[nodiscard]] Node* getNode(Id id) noexcept {
-    return const_cast<Node*>(findNode_(root_.get(), id));
+    return const_cast<Node*>(static_cast<const LeftTree*>(this)->getNode(id));
   }
 
   enum class ElementType : std::uint8_t { Node = 1, Leaf = 2 };
@@ -121,7 +132,7 @@ public:
 
   /** Returns whether the element with this ID is a Node or Leaf; nullopt if not found. */
   [[nodiscard]] std::optional<ElementType> getElementType(Id id) const noexcept {
-    const Element* e = findElementById_(root_.get(), id);
+    const Element* e = getElementById_(id);
     if (!e) return std::nullopt;
     return e->isLeaf() ? ElementType::Leaf : ElementType::Node;
   }
@@ -133,7 +144,7 @@ public:
    * Returns nullopt if ID not found.
    */
   [[nodiscard]] std::optional<ElementData> getElementData(Id id) const noexcept {
-    const Element* e = findElementById_(root_.get(), id);
+    const Element* e = getElementById_(id);
     if (!e) return std::nullopt;
 
     if (e->isLeaf()) {
@@ -163,6 +174,10 @@ private:
     path_.clear();
     path_.push_back(current_);
     insertLeft_ = true;
+
+    // Root node means tree is not complete yet.
+    idIndexBuilt_ = false;
+    idIndex_.clear();
   }
 
   void createRootLeaf_(std::optional<LeafData> data) {
@@ -174,6 +189,10 @@ private:
     current_ = nullptr;
     path_.clear();
     insertLeft_ = true;
+
+    // A single-leaf tree is complete immediately; build the index now.
+    idIndexBuilt_ = false;
+    buildIdIndexIfComplete_();
   }
 
   void createNode(std::optional<NodeData> data) {
@@ -200,6 +219,10 @@ private:
     current_ = childPtr;
     path_.push_back(current_);
     insertLeft_ = true;
+
+    // Creating a node never completes the tree.
+    idIndexBuilt_ = false;
+    idIndex_.clear();
   }
 
   void createLeaf(std::optional<LeafData> data) {
@@ -223,6 +246,9 @@ private:
     }
 
     backtrackAfterLeaf_();
+
+    // If this leaf finished the tree, build the index once.
+    buildIdIndexIfComplete_();
   }
 
   void backtrackAfterLeaf_() {
@@ -255,16 +281,17 @@ private:
     insertLeft_ = true;
   }
 
-  static const Node* findNode_(const Element* e, Id id) noexcept {
-    if (!e) return nullptr;
-    if (!e->isLeaf()) {
-      auto* n = static_cast<const Node*>(e);
-      if (n->id == id) return n;
-      if (auto* l = findNode_(n->left.get(), id)) return l;
-      if (auto* r = findNode_(n->right.get(), id)) return r;
-      return nullptr;
+  [[nodiscard]] const Element* getElementById_(Id id) const noexcept {
+    // Use the fast index once the tree is complete and the index has been built.
+    if (idIndexBuilt_) {
+      if (id < 0) return nullptr;
+      const auto idx = static_cast<std::size_t>(id);
+      if (idx >= idIndex_.size()) return nullptr;
+      return idIndex_[idx];
     }
-    return nullptr;
+
+    // Fallback during construction.
+    return findElementById_(root_.get(), id);
   }
 
   static const Element* findElementById_(const Element* e, Id id) noexcept {
@@ -278,11 +305,52 @@ private:
     return findElementById_(n->right.get(), id);
   }
 
+  void buildIdIndexIfComplete_() {
+    if (!complete() || idIndexBuilt_) return;
+
+    if (nextId_ < 0) {
+      throw std::logic_error("LeftTree internal error: negative nextId_");
+    }
+
+    idIndex_.assign(static_cast<std::size_t>(nextId_), nullptr);
+    fillIdIndex_(root_.get());
+
+    // Validate that every ID [0..nextId_) exists exactly once.
+    for (std::size_t i = 0; i < idIndex_.size(); ++i) {
+      if (idIndex_[i] == nullptr) {
+        throw std::logic_error("LeftTree internal error: missing element ID in index");
+      }
+    }
+
+    idIndexBuilt_ = true;
+  }
+
+  void fillIdIndex_(const Element* e) {
+    if (!e) return;
+
+    if (e->id < 0) throw std::logic_error("LeftTree internal error: negative element ID");
+    const auto idx = static_cast<std::size_t>(e->id);
+    if (idx >= idIndex_.size()) throw std::logic_error("LeftTree internal error: element ID out of range");
+    if (idIndex_[idx] != nullptr) throw std::logic_error("LeftTree internal error: duplicate element ID");
+
+    idIndex_[idx] = e;
+
+    if (!e->isLeaf()) {
+      const auto* n = static_cast<const Node*>(e);
+      fillIdIndex_(n->left.get());
+      fillIdIndex_(n->right.get());
+    }
+  }
+
   std::unique_ptr<Element> root_;
   Id nextId_ = 0;
   std::vector<Node*> path_;
   Node* current_ = nullptr;
   bool insertLeft_ = true;
+
+  // Built only when the tree becomes complete (current_ == nullptr).
+  bool idIndexBuilt_ = false;
+  std::vector<const Element*> idIndex_;
 };
 
 } // namespace lefttree
